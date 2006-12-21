@@ -1,5 +1,12 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.17 (2006-12-02)
+    * Clicking in the difference map will re-center the view on that location.
+    * Fix to prevent files with incomplete last lines (no \n) from interfering
+      with synchronized scrolling.
+    * The compare() method now accepts a user-defined key generation function
+      via the -keygen argument.
+
 0.16 (2006-11-30)
     * Added scrolled difference map support.
     * Added current view marker to scaled map.

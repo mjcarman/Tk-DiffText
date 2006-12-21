@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/30/2006 8:46PM
+# Last Modified: 12/2/2006 4:27PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 package Tk::DiffText;
 use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.16';
+$VERSION = '0.17';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -85,12 +85,12 @@ sub Populate {
 	my $side = $orient eq 'horizontal' ? 'top' : 'left';
 
 	my $dm = $f->Canvas(
-		-width      => 20,        #
-		-height     => 1,         # fills to match Text areas
-		-background => 'white',   #
-		-takefocus          => 0, #
-		-highlightthickness => 0, #
+		-width              => 20, #
+		-height             => 1,  # fills to match Text areas
+		-takefocus          => 0,  #
+		-highlightthickness => 0,  #
 	);
+	$dm->Tk::bind('<Button-1>', [\&_mapjump, $self, Tk::Ev('x'), Tk::Ev('y')]);
 
 	unless ($self->{_map}{type} eq 'none') {
 		$self->{_map}{height} = 0;
@@ -136,8 +136,8 @@ sub Populate {
 		# pass most options through to the ROText widgets.
 		# Sometimes to just the text ones, sometimes to the gutters too.
 		DEFAULT           => [[_gw('text', @p)]],
-		-background       => [[_gw('text', @p)]], # DEFAULT doesn't catch fg/bg?
-		-foreground       => [[_gw('text', @p)]],
+		-background       => [[_gw('text', @p), $dm]], # DEFAULT doesn't catch fg/bg?
+		-foreground       => [[_gw('text', @p), $dm]],
 		-font             => [[_gw('text', @p), _gw('gutter', @p)]], # sync gutter font to text for vertical alignment
 		-pady             => [[_gw('text', @p), _gw('gutter', @p)]], # pad gutter too for y, (valign) but not for x
 		-wrap             => [[_gw('text', @p)], qw'wrap Wrap none'],
@@ -343,7 +343,7 @@ sub _reset_tags {
 sub _compare_text {
 	my $self = shift;
 	my %opt  = @_;
-	my $kg   = _make_sdiff_keygen(%opt);
+	my $kg   = $opt{-keygen} || _make_sdiff_keygen(%opt);
 
 	$self->_reset_tags('a');
 	$self->_reset_tags('b');
@@ -598,6 +598,12 @@ sub load {
 		}
 	}
 
+	if ($tw->get('end - 2 chars', 'end') ne "\n\n") {
+		# The last line of file doesn't contain a newline. This horks up 
+		# synchronized scrolling, so we add one to prevent that from happening.
+		$tw->insert('end', "\n");
+	}	
+
 	my $n = $ok ? @$ta       :  0;
 	my $w = $ok ? length($n) : -1;
 	$gw->insert('end', sprintf("%${w}i\n", $_)) foreach (1 .. $n);
@@ -645,6 +651,46 @@ sub _get_map_colors {
 	}
 	return \%mapcolors;
 }
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _mapjump
+# Purpose    : recenter view on location from map
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _mapjump {
+	my ($canvas, $self, $x, $y) = @_;
+
+	return unless $self->{_scroll_lock};
+
+	my $w = $self->Subwidget('gutter_a');
+	my $top;
+
+	if ($self->{_map}{type} eq 'scaled') {
+		my (undef, $y1, undef, $y2) = $canvas->coords('view');
+		my $h  = $y2 - $y1;             # height of current view
+		my $vh = $self->{_map}{height}; # virtual height of canvas
+		my $sf = $self->{_map}{scale};  # canvas scale factor
+
+		$top = ($y - $h/2) / ($vh * $sf);
+	}
+	elsif ($self->{_map}{type} eq 'scrolled') {
+		my ($ct, undef) = $w->yview();               # current view
+		my $ph = $self->Subwidget('canvas')->height; # physical height of canvas
+		my $vh = $self->{_map}{height};              # virtual height of canvas
+
+		$top = $ct + ($y - $ph/2) / $vh;
+	}
+
+	# limiter scrolling to valid range
+	$top = 0 if $top < 0;
+	$top = 1 if $top > 1;
+
+	# cause the real motion by moving (just one!) of the
+	# scroll-locked widgets
+	$w->yviewMoveto($top);
+}
+
 
 1;
 
@@ -731,6 +777,7 @@ Returns true on success, false otherwise.
   $w->compare(
   	-case        => 0,
   	-whitespace  => 0,
+  	-keygen      => \&makekey,
   	-granularity => 'line', # or 'word' 'char' or regexp
   );
 
@@ -738,6 +785,11 @@ Compares the data in the text frames and highlights the differences.
 
 Setting either C<-case> or C<-whitespace> to 0 instructs the diff algorithm to 
 ignore case and whitespace, respectively.
+
+You can provide your own key generation function via the C<-keygen> argument. 
+This overrides the C<-case> and C<-whitespace> options, so you'll have to build 
+that functionality into your function if you want it. See L<Algorithm::Diff> for 
+more details on key generation functions.
 
 The C<-granularity> option controls the level of detail at which the diff is 
 performed. The default value, 'line,' shows differences between lines. Changing 
