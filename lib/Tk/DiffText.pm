@@ -1,25 +1,19 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/15/2006 2:43PM
+# Last Modified: 11/19/2006 3:13PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
-
+use Carp qw'carp';
 use Tk;
 use Tk::widgets qw'ROText Scrollbar';
 
 package Tk::DiffText;
 use vars qw'$VERSION';
-$VERSION = '0.12';
+$VERSION = '0.13';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
-
-my @tag = (
-	{'u' => undef, 'c' => 'mod', '-' => 'del', '+' => 'del'},
-	{'u' => undef, 'c' => 'mod', '-' => 'add', '+' => 'add'},
-);
-
 
 #-------------------------------------------------------------------------------
 # Method  : ClassInit
@@ -30,10 +24,13 @@ sub ClassInit {
 	my ($class, $mw) = @_;
 	$class->SUPER::ClassInit($mw);
 
-	# This module is pretty crippled if Algorithm::Diff isn't available,
-	# but let's degrade nicely instead of dieing.
-	eval {require Algorithm::Diff};
-	*_diff = $@ ? \&_show_plain_text : \&_show_diff_text;
+	# This module is pretty crippled if we can't do diffs, but let's degrade
+	# nicely instead of dieing.
+	eval {
+		require Algorithm::Diff;
+		require Tie::Tk::Text;
+	};
+	*compare = $@ ? \&_pad_text : \&_compare_text;
 
 	# Only needed to resolve passing data inputs as *FH{IO} or *FH{FILEHANDLE}
 	eval {require IO::File};
@@ -80,120 +77,146 @@ sub Populate {
 
 	$self->SUPER::Populate($arg);
 
-	my @fw; # frame widgets
-	my @tw; # text widgets
-	my @gw; # gutter widgets
+	my $side = $orient eq 'horizontal' ? 'top' : 'left';
 
-	for (0 .. 1) {
-
-		push @fw, $f->Frame()->pack(
-			-side => $orient eq 'horizontal' ? 'top' : 'left',
-			-fill => 'both',
-			-expand => 1,
-		);
-
-		my $hsb = $fw[-1]->Scrollbar(-orient => 'horizontal')
-			->pack(-side => 'bottom', -fill => 'x');
-
-		push @gw, $fw[-1]->ROText(
-			-height      => 1, # height fills to match text areas
-			-width       => 1, # just for starters
-			-borderwidth => 0,
-			-state       => 'disabled',
-			-wrap        => 'none',
-		)->pack(-side => 'left', -fill => 'y');
-
-		push @tw, $fw[-1]->ROText(
-			-width          => 1, # size controlled via parent so that panes are
-			-height         => 1, # always balanced even when window resized.
-			-borderwidth    => 0,
-			-xscrollcommand => ['set' => $hsb],
-		)->pack(-side => 'left', -fill => 'both', -expand => 1);
-
-		for my $w ($tw[-1]) {
-			$w->tagConfigure('norm', @{[]});
-			$w->tagConfigure('add',  @{$diffcolors->{add}});
-			$w->tagConfigure('del',  @{$diffcolors->{del}});
-			$w->tagConfigure('mod',  @{$diffcolors->{mod}});
-			$w->tagConfigure('pad',  @{$diffcolors->{pad}});
-			$w->tagRaise('sel');
-		}
-
-		my $t = $tw[-1]; # make static widget ref for scrollbar closure
-		$hsb->configure(-command => sub { $t->xview(@_) });
-
-	}
-
-	my $sb = $f->Scrollbar()->pack(
-		-before => $orient eq 'horizontal' ? $fw[0] : $fw[1],
-		-side   => 'left',
-		-fill   => 'y',
+	my @p = (
+		_make_pane($f, $side, $diffcolors, $gutter),
+		_make_pane($f, $side, $diffcolors, $gutter),
 	);
 
+	$self->{_textarray} = {
+		a => $p[0]->{textarray},
+		b => $p[1]->{textarray},
+	};
+	$self->{_scroll_lock} = 0;
 
-	my @slw;
-	if ($gutter) {
-		@slw = (@tw, @gw);
-	}
-	else {
-		@slw = @tw;
-		$_->packForget() foreach @gw;
-	}
-
-	# scrollbar controls all scroll-locked widgets
-	$sb->configure(-command => sub { $_->yview(@_) foreach (@slw) });
-
-	# scrolling any scroll-locked widget scrolls all of them
-	foreach my $x (@slw) {
-		$x->configure(-yscrollcommand => [\&_scroll_panes, $sb, $x, \@slw]);
+	# Set up synchronized scrolling between panes. It can be turned on/off by
+	# toggling the _scroll_lock flag.
+	for my $i (0 .. 1) {
+		foreach my $w (@{$p[$i]->{scroll_locked}}) {
+			$w->configure(-yscrollcommand =>
+				[\&_scroll_panes, $w, \@p, $i, \$self->{_scroll_lock}]);
+		}	
 	}
 
 	$self->ConfigSpecs(
 		# overall widget size
-		-width            => [{-width      => $wf }, qw'width      Width      780'],
-		-height           => [{-height     => $hf }, qw'height     Height     580'],
+		-width            => [{-width      => $wf }, qw'width  Width  780'],
+		-height           => [{-height     => $hf }, qw'height Height 580'],
 
 		# aliases for controlling gutter configuration
-		-gutterbackground => [{-background => \@gw}, qw'background Background', '#f0f0f0'],
-		-gutterforeground => [{-foreground => \@gw}, qw'foreground Foreground', '#5c5c5c'],
+		-gutterbackground => [{-background => [_gw('gutter', @p)]}, qw'background Background', '#f0f0f0'],
+		-gutterforeground => [{-foreground => [_gw('gutter', @p)]}, qw'foreground Foreground', '#5c5c5c'],
 
 		# We want the gutter to look like it's part of the main ROText widget, 
 		# not a seperate one. To do that we set -borderwidth to 0 on the widgets 
 		# and use the frames enclosing them to provide the borders.
-		-relief           => [\@fw, qw'relief      Relief      sunken'],
-		-borderwidth      => [\@fw, qw'borderwidth borderWidth 2'     ],
+		-relief           => [[_gw('frame', @p)], qw'relief      Relief      sunken'],
+		-borderwidth      => [[_gw('frame', @p)], qw'borderwidth borderWidth 2'     ],
 
 		# pass most options through to the ROText widgets.
 		# Sometimes to just the text ones, sometimes to the gutters too.
-		DEFAULT           => [\@tw],
-		-background       => [\@tw], # DEFAULT doesn't catch fg/bg?
-		-foreground       => [\@tw],
-		-font             => [[@tw, @gw]], # sync gutter font to text for vertical alignment
-		-pady             => [[@tw, @gw]], # pad gutter too for y, (valign) but not for x
-		-wrap             => [\@tw, qw'wrap Wrap none'],
-
+		DEFAULT           => [[_gw('text', @p)]],
+		-background       => [[_gw('text', @p)]], # DEFAULT doesn't catch fg/bg?
+		-foreground       => [[_gw('text', @p)]],
+		-font             => [[_gw('text', @p), _gw('gutter', @p)]], # sync gutter font to text for vertical alignment
+		-pady             => [[_gw('text', @p), _gw('gutter', @p)]], # pad gutter too for y, (valign) but not for x
+		-wrap             => [[_gw('text', @p)], qw'wrap Wrap none'],
 	);
 
-	# Don't want to advertise these widgets (at least for now)
-	# but we need access to them in method calls.
-	$self->{_widget} = {
-		text   => \@tw,
-		gutter => \@gw,
-	};
+	$self->Advertise(text_a       => $p[0]->{text}      );
+	$self->Advertise(gutter_a     => $p[0]->{gutter}    );
+	$self->Advertise(hscrollbar_a => $p[0]->{hscrollbar});
+	$self->Advertise(vscrollbar_a => $p[0]->{vscrollbar});
 
-	# Advertising the scrollbar makes it possible to align widgets over the text panes
-	# (like a Entry containing the file name) via a spacer frame with it's width
-	# set to match the scrollbars. ($w->Subwidget('scrollbar')->cget('width'))
-	$self->Advertise(
-		scrollbar => $sb,
-	);
-
-#	$self->Delegates(
-#		load_text0 => $tw[0],
-#		load_text1 => $tw[1],
-#	);
+	$self->Advertise(text_b       => $p[1]->{text}      );
+	$self->Advertise(gutter_b     => $p[1]->{gutter}    );
+	$self->Advertise(hscrollbar_b => $p[1]->{hscrollbar});
+	$self->Advertise(vscrollbar_b => $p[1]->{vscrollbar});
 
 }
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _make_pane
+# Purpose    : Create a frame with a text widget, gutter, and scrollbars
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _make_pane {
+	my $pw     = shift; # parent widget
+	my $side   = shift; # where to pack pane
+	my $diffcolors = shift;
+	my $gutter = shift; # gutter displayed?
+
+	my $f = $pw->Frame()->pack(
+		-side   => $side,
+		-fill   => 'both',
+		-expand => 1,
+	);
+
+	# would like a padded corner between these
+	my $vsb = $f->Scrollbar(-orient => 'vertical')
+		->pack(-side => 'right', -fill => 'y');
+	my $hsb = $f->Scrollbar(-orient => 'horizontal')
+		->pack(-side => 'bottom', -fill => 'x');
+
+	my $gw = $f->ROText(
+		-height      => 1, # height fills to match text areas
+		-width       => 1, # just for starters
+		-borderwidth => 0,
+		-state       => 'disabled',
+		-wrap        => 'none',
+	)->pack(-side => 'left', -fill => 'y');
+
+	my $tw = $f->ROText(
+		-width          => 1, # size controlled via parent so that panes are
+		-height         => 1, # always balanced even when window resized.
+		-borderwidth    => 0,
+		-xscrollcommand => ['set' => $hsb],
+	)->pack(-side => 'left', -fill => 'both', -expand => 1);
+
+	my @text; tie @text, 'Tie::Tk::Text', $tw;
+	
+	$gw->tagConfigure('pad',  @{[]});
+	$tw->tagConfigure('pad',  @{$diffcolors->{pad}});
+	$tw->tagConfigure('add',  @{$diffcolors->{add}});
+	$tw->tagConfigure('del',  @{$diffcolors->{del}});
+	$tw->tagConfigure('mod',  @{$diffcolors->{mod}});
+	$tw->tagRaise('sel');
+
+	$hsb->configure(-command => sub { $tw->xview(@_) });
+
+	# scroll-locked widgets. Don't lock the gutter if it's not packed!
+	my @slw = $gutter ? ($tw, $gw) : ($tw);
+
+	$gw->packForget() unless $gutter;
+
+	# scrollbar controls both text and gutter (if visible)
+	$vsb->configure(-command => sub { $_->yview(@_) foreach (@slw) });
+
+	# widgets will have their yscrollcommand set *after* we're done creating
+	# all of the panes so that we can regulate the synchronized scrolling
+	# between them.
+	
+	return {
+		frame         => $f,
+		vscrollbar    => $vsb,
+		hscrollbar    => $hsb,
+		gutter        => $gw,
+		text          => $tw,
+		textarray     => \@text,
+		scroll_locked => \@slw,
+	};
+
+}
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _gw
+# Purpose    : get all widgets of a particular type from all panes
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _gw { my $t = shift; return map {$_->{$t}} @_ }
 
 
 #-------------------------------------------------------------------------------
@@ -202,13 +225,18 @@ sub Populate {
 # Notes      :
 #-------------------------------------------------------------------------------
 sub _scroll_panes {
-	my $sb = shift; # scrollbar
-	my $w  = shift; # calling widget
-	my $sw = shift; # scrolled widgets
+	my $w      = shift; # calling widget
+	my $pane   = shift; # list of panes
+	my $i      = shift; # which pane widget is in
+	my $locked = shift; # state of synchronized scrolling
 
-	$sb->set(@_);
 	my ($top, $bottom) = $w->yview();
-	$_->yviewMoveto($top) foreach @$sw;
+
+	foreach my $p (@$pane) {
+		next unless ($$locked || $p eq $pane->[$i]);
+		$p->{vscrollbar}->set(@_);
+		$_->yviewMoveto($top) foreach @{$p->{scroll_locked}};
+	}	
 }
 
 
@@ -218,96 +246,97 @@ sub _scroll_panes {
 # Notes   : 
 #-------------------------------------------------------------------------------
 sub diff {
-	my ($self) = @_;
-	my $tw = $self->{_widget}{text};
-	my $gw = $self->{_widget}{gutter};
-
-	$gw->[0]->configure(-state => 'normal');
-	$gw->[1]->configure(-state => 'normal');
-	$gw->[0]->delete('0.0', 'end');
-	$gw->[1]->delete('0.0', 'end');
-	$tw->[0]->delete('0.0', 'end');
-	$tw->[1]->delete('0.0', 'end');
-
-	$self->update();
-
-	&_diff; # call helper w/same args
-
-	$gw->[0]->configure(-state => 'disabled');
-	$gw->[1]->configure(-state => 'disabled');
-
-	$self->update();
+	carp("Method diff() deprecated"); # tidy this with "use warnings" ?
+	$_[0]->load(a => $_[1]);
+	$_[0]->load(b => $_[2]);
+	$_[0]->compare();
 }
 
 
 #-------------------------------------------------------------------------------
-# Subroutine : _show_plain_text
-# Purpose    : show both files as plain text (no markup)
+# Subroutine : _pad_text
+# Purpose    : Make both files the same length (for scrolling). No markup.
 # Notes      :
 #-------------------------------------------------------------------------------
-sub _show_plain_text {
+sub _pad_text {
 	my $self = shift;
-#	my %opt  = @_[2 .. $#_]; # options unused for diff-less mode
-	my $tw   = $self->{_widget}{text};
-	my $gw   = $self->{_widget}{gutter};
+	my $a    = $self->{_textarray}{a};
+	my $b    = $self->{_textarray}{b};
+	my $z    = $#$b - $#$a;
 
-	my $x  = _load($_[0]); # don't make copies of $_[0] and $_[1] in case
-	my $y  = _load($_[1]); # they contain an entire slurped file.
+	return if $z == 0;
 
-	my $z  = @$y - @$x;
-	my $w  = length($z);
-	my @ln = (1, 1);
+	my $x  = $z > 0 ? 'a' : 'b';
+	my $tw = $self->Subwidget("text_$x");
+	my $gw = $self->Subwidget("gutter_$x");
 
-	$gw->[0]->configure(-width => $w + 1);
-	$gw->[1]->configure(-width => $w + 1);
+	$gw->configure(-state => 'normal');
 
-	foreach my $l (@$x) {
-		$gw->[0]->insert('end', sprintf("%${w}i\n", $ln[0]++));
-		$tw->[0]->insert('end', $l);
-	}
-	if ($z > 0) {
-		for (1 .. $z) {
-			$gw->[0]->insert('end', "\n");
-			$tw->[0]->insert('end', "\n");
-		}
+	for (1 .. abs $z) {
+		$gw->insert('end', "\n", 'pad');
+		$tw->insert('end', "\n", 'pad');
 	}
 
-	foreach my $l (@$y) {
-		$gw->[1]->insert('end', sprintf("%${w}i\n", $ln[1]++));
-		$tw->[1]->insert('end', $l);
-	}
-	if ($z < 0) {
-		for (1 .. -$z) {
-			$gw->[1]->insert('end', "\n");
-			$tw->[1]->insert('end', "\n");
-		}
-	}
+	$gw->configure(-state => 'disabled');
+
+	$self->{_scroll_lock} = 1;
+
 }
 
 
 #-------------------------------------------------------------------------------
-# Subroutine : _show_diff_text
-# Purpose    : show highlighted differences between files
-# Notes      :
+# Subroutine : _reset_tags
+# Purpose    : Removes padding and clears markup tags from pane.
+# Notes      : 
 #-------------------------------------------------------------------------------
-sub _show_diff_text {
-	my $self  = shift;
-	my %opt   = @_[2 .. $#_];
-	my $tw    = $self->{_widget}{text};
-	my $gw    = $self->{_widget}{gutter};
+sub _reset_tags {
+	my $self = shift;
+	my $p    = shift; # 'a' or 'b'
 
-	my $x = _load($_[0]); # don't make copies of $_[0] and $_[1] in case
-	my $y = _load($_[1]); # they contain an entire slurped file.
+	my $tw = $self->Subwidget("text_$p"  );
+	$tw->tagRemove('add', '1.0', 'end');
+	$tw->tagRemove('del', '1.0', 'end');
+	$tw->tagRemove('mod', '1.0', 'end');
+	$tw->DeleteTextTaggedWith('pad');
 
+	my $gw = $self->Subwidget("gutter_$p");
+	$gw->configure(-state => 'normal');
+	$gw->DeleteTextTaggedWith('pad');
+	$gw->configure(-state => 'disabled');
+
+}
+
+
+#-------------------------------------------------------------------------------
+# Method  : _compare_text
+# Purpose : Compares the data in the text frames and highlights the differences.
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub _compare_text {
+	my $self = shift;
+	my %opt  = @_;
 	my $kg   = _make_sdiff_keygen(%opt);
-	my @diff = _sdiff($x, $y, $kg);
-	my $w    = length(scalar @diff);
 
-	$gw->[0]->configure(-width => $w + 1);
-	$gw->[1]->configure(-width => $w + 1);
+	$self->_reset_tags('a');
+	$self->_reset_tags('b');
+
+	my $ga = $self->Subwidget('gutter_a');
+	my $gb = $self->Subwidget('gutter_b');
+	my $ta = $self->Subwidget('text_a'  );
+	my $tb = $self->Subwidget('text_b'  );
+
+	$ga->configure(-state => 'normal');
+	$gb->configure(-state => 'normal');
+
+	my @diff = _sdiff(
+		$self->{_textarray}{a},
+		$self->{_textarray}{b},
+		$kg,
+	);
 
 	my $re;
 	for ($opt{-granularity}) {
+		defined         || do { last };
 		ref eq 'Regexp' && do { $re = $_;           last };
 		/^line$/        && do { $re = undef;        last };
 		/^word$/        && do { $re = qr/(\s+|\b)/; last };
@@ -315,63 +344,79 @@ sub _show_diff_text {
 		! ref           && do { $re = qr/$_/;       last };
 	}
 
-	my @ln = (1,  1);
+	my @pads = (undef, 0, 0);
+
 	foreach my $d (@diff) {
+		next if ($d->[0] eq 'u'); # line matches. stop.
 
-		if ($re && $d->[0] eq 'c') {
-			# Provide detail on changes within the line.
-
-			# Remove any trailing newline so that it won't cause the tag to
-			# highlight to EOL.
-			my @nl = (chomp ${$d->[1]}, chomp ${$d->[2]});
-			my $dx = [split($re, ${$d->[1]})];
-			my $dy = [split($re, ${$d->[2]})];
-			my @dd = _sdiff($dx, $dy, $kg);
-
-			foreach my $d (@dd) {
-				$tw->[0]->insert('end', ${$d->[1]}, $tag[0]{$d->[0]});
-				$tw->[1]->insert('end', ${$d->[2]}, $tag[1]{$d->[0]});
-			}
-
-			# Replace any newlines removed so that we know whether or
-			# not to pad the line. Also write a newline to the text area.
-			for my $i (0 .. 1) {
-				next unless $nl[$i];
-				${$d->[$i+1]} .= "\n";
-				$tw->[$i]->insert('end', "\n");
-			}
-
+		if ($d->[0] eq '-') {
+			my $l = $d->[1] + $pads[1]; $pads[2]++;
+			$ta->tagAdd('del', "$l.0", "$l.end + 1 chars");
+			$gb->insert("$l.0", "\n", 'pad');
+			$tb->insert("$l.0", "\n", 'pad');
 		}
-		else {
-			# Either the whole line matches, or it doesn't match at all (add/del)
-			# or we don't want finer resolution on what the differences are.
-			$tw->[0]->insert('end', ${$d->[1]}, $tag[0]{$d->[0]});
-			$tw->[1]->insert('end', ${$d->[2]}, $tag[1]{$d->[0]});
+		elsif ($d->[0] eq '+') {
+			my $l = $d->[2] + $pads[2]; $pads[1]++;
+			$tb->tagAdd('add', "$l.0", "$l.end + 1 chars");
+			$ga->insert("$l.0", "\n", 'pad');
+			$ta->insert("$l.0", "\n", 'pad');
 		}
+		elsif ($d->[0] eq 'c') {
+			if ($re) {
+				# Provide detail on changes within the line.
+				my $l1 = $d->[1] + $pads[1];
+				my $l2 = $d->[2] + $pads[2];
+				my $dx = [split($re, $ta->get("$l1.0", "$l1.end"))];
+				my $dy = [split($re, $tb->get("$l2.0", "$l2.end"))];
+				my @dd = Algorithm::Diff::sdiff($dx, $dy, $kg);
+			
+				my ($c1, $c2) = (0, 0);
+				foreach my $d (@dd) {
+					my $n1 = length $d->[1];
+					my $n2 = length $d->[2];
 
-		for my $n (0 .. 1) {
-			if (${$d->[$n+1]} =~ /\n/) {
-				# Add line number from source file to gutter
-				$gw->[$n]->insert('end', sprintf("%${w}i\n", $ln[$n]++));
+					if ($d->[0] eq '-') {
+						$ta->tagAdd('del', "$l1.$c1", "$l1.$c1 + $n1 chars");
+					}
+					elsif ($d->[0] eq '+') {
+						$tb->tagAdd('add', "$l2.$c2", "$l2.$c2 + $n2 chars");
+					}
+					elsif ($d->[0] eq 'c') {
+						$ta->tagAdd('mod', "$l1.$c1", "$l1.$c1 + $n1 chars");
+						$tb->tagAdd('mod', "$l2.$c2", "$l2.$c2 + $n2 chars");
+					}
+					# else $d->[0] eq 'u' -- no change
+
+					$c1 += $n1;
+					$c2 += $n2;
+				}
+
 			}
 			else {
-				# Pad text display to align matches
-				# Leave line number empty
-				$tw->[$n]->insert('end', "\n", 'pad');
-				$gw->[$n]->insert('end', "\n");
+				my $l1 = $d->[1] + $pads[1];
+				my $l2 = $d->[2] + $pads[2];
+				$ta->tagAdd('mod', "$l1.0", "$l1.0 lineend + 1 chars");
+				$tb->tagAdd('mod', "$l2.0", "$l2.0 lineend + 1 chars");
 			}
 		}
 
 	}
+
+	$ga->configure(-state => 'disabled');
+	$gb->configure(-state => 'disabled');
+
+	$self->{_scroll_lock} = 1;
+
 }
 
 
 #-------------------------------------------------------------------------------
 # Subroutine : _sdiff
-# Purpose    : Replacement for Algorithm::Diff::sdiff that returns references
-#              to sequences instead of copies of them. (This is to reduce memory
+# Purpose    : Replacement for Algorithm::Diff::sdiff that returns indices of
+#              sequences instead of copies of them. (This is to reduce memory
 #              usage.)
-# Notes      : 
+# Notes      : Text widgets use 1 based indexing but we're tie()d to a
+#              zero-based array
 #-------------------------------------------------------------------------------
 sub _sdiff {
 	my $a = shift;
@@ -380,10 +425,10 @@ sub _sdiff {
 
 	Algorithm::Diff::traverse_balanced($a, $b,
 		{
-			MATCH     => sub { push @$d, ['u', \$a->[$_[0]], \$b->[$_[1]]] },
-			DISCARD_A => sub { push @$d, ['-', \$a->[$_[0]],     undef   ] },
-			DISCARD_B => sub { push @$d, ['+',     undef   , \$b->[$_[1]]] },
-			CHANGE    => sub { push @$d, ['c', \$a->[$_[0]], \$b->[$_[1]]] },
+			MATCH     => sub { push @$d, ['u', $_[0]+1, $_[1]+1] },
+			DISCARD_A => sub { push @$d, ['-', $_[0]+1, undef  ] },
+			DISCARD_B => sub { push @$d, ['+', undef,   $_[1]+1] },
+			CHANGE    => sub { push @$d, ['c', $_[0]+1, $_[1]+1] },
 		},
 		@_
 	);
@@ -416,51 +461,89 @@ sub _make_sdiff_keygen {
 
 
 #-------------------------------------------------------------------------------
-# Subroutine : _load
-# Purpose    : Load data from fine name, handle, scalar, whatever...
-# Notes      :
+# Method  : load
+# Purpose : Load data into one of the text panes.
+# Notes   : 
 #-------------------------------------------------------------------------------
-sub _load {
+sub load {
+	my $self  = $_[0];
+	my $where = lc $_[1];
+	my ($tw, $gw, $ta);
+	
+	unless ($where =~ /^[ab]$/) {
+		carp("Invalid load destination '$_[1]'");
+		return;
+	}
+
+	$self->{_scroll_lock} = 0;
+
+	$self->_reset_tags('a');
+	$self->_reset_tags('b');
+
+	$tw = $self->Subwidget("text_$where");
+	$gw = $self->Subwidget("gutter_$where");
+	$ta = $self->{_textarray}{$where};
+
+	$tw->delete('1.0', 'end');
+
+	$self->update();
 
 	# Accept naive user input
-	$_[0] = ${$_[0]} if ref $_[0] eq 'REF';  # \*FH{IO} instead of *FH{IO}
-	$_[0] = *{$_[0]} if ref $_[0] eq 'GLOB'; # \*FH     instead of *FH
+	$_[2] = ${$_[2]} if ref $_[2] eq 'REF';  # \*FH{IO} instead of *FH{IO}
+	$_[2] = *{$_[2]} if ref $_[2] eq 'GLOB'; # \*FH     instead of *FH
 
-	if (ref $_[0]) {
-		if (ref $_[0] eq 'ARRAY') {
-			return $_[0]; # assume lines of file data, nothing to do, woohoo!
+	if (ref $_[2]) {
+		if (ref $_[2] eq 'ARRAY') {
+			# assume lines of file data
+			$tw->insert('end', $_) foreach @{$_[2]};
 		}
-		elsif ($_[0]->can('getlines')) {
+		elsif ($_[2]->can('getline')) {
 			# IO::File must be loaded for this to work
-			return [$_[0]->getlines]; # assume IO::File or equiv
+			while (my $x = $_[2]->getline) {
+				$tw->insert('end', $x); # assume IO::File or equiv
+			}
 		}
 		else {
-			warn sprintf("Don't know how to load from '%s' reference\n", ref $_[0]);
+			carp(sprintf("Don't know how to load from '%s' reference", ref $_[2]));
 			return;
 		}
 	}
-	elsif ($_[0] =~ /^\*(\w*::)+\$?\w+$/) {
+	elsif ($_[2] =~ /^\*(\w*::)+\$?\w+$/) {
 		# GLOB; assume open filehandle
-		my $fh = $_[0]; # copy to scalar so that <> interprets it as a filehandle
-		return [<$fh>]; # and not a glob pattern. cf. perlop - I/O Operators
+		# copy to scalar so that <> interprets it as a filehandle
+		# and not a glob pattern. cf. perlop - I/O Operators
+		my $fh = $_[2];
+		do { $tw->insert('end', $_) } while (<$fh>);
 	}
-	elsif ($_[0] =~ /\n/) {
-		return [split /^/m, $_[0]] # assume contents of slurped file
+	elsif ($_[2] =~ /\n/) {
+		# assume contents of slurped file
+		$tw->insert('end', $_[2]);
 	}		
-	elsif (-T $_[0]) {
+	elsif (-T $_[2]) {
 		# Need two-arg open() for perls < v5.6
 		# what version added open($fh...) in place of open(FH...)
 		local *FH;
-		open(FH, "< $_[0]") or do { warn "Can't read file '$_[0]' [$!]\n"; return };
-		my @data = <FH>;
+		open(FH, "< $_[2]") or do { carp("Can't read file '$_[2]' [$!]"); return };
+		do { $tw->insert('end', $_) } while (<FH>);
 		close(FH);
-		return \@data;
 	}
 	else {
-		warn sprintf("Don't know how to load data from '%s'\n", $_[0]);
+		carp(sprintf("Don't know how to load data from '%s'", $_[2]));
 		return;
 	}
+
+	my $n = @$ta;
+	my $w = length($n);
+	$gw->configure(-state => 'normal');
+	$gw->delete('0.0', 'end');
+	$gw->insert('end', sprintf("%${w}i\n", $_)) foreach (1 .. $n);
+	$gw->configure(-width => $w + 1);
+	$gw->configure(-state => 'disabled');
+
+	$self->update();
+	return 1;
 }
+
 
 
 1;
@@ -521,21 +604,27 @@ ROText widget tag: -foreground, -background, -overstrike, etc.
 
 =head1 METHODS
 
-=head2 C<diff>
+=head2 C<load>
 
-  $w->diff(
-  	$data1,
-  	$data2,
+  $w->load(a => I<data>);
+  $w->load(b => I<data>);
+
+Load I<data> into frames a (top or left) and b (bottom or right), respectively.
+
+Normally I<data> is a filename but it can also be a reference to an array of 
+lines of data, a string containing a slurped file, an open filehandle, a glob 
+(which is interpreted as a filehandle), an IO::File object or any other object 
+with a C<getline> method.
+
+=head2 C<compare>
+
+  $w->compare(
   	-case        => 0,
   	-whitespace  => 0,
   	-granularity => 'line', # or 'word' 'char' or regexp
   );
 
-Does a diff between C<$data1> and C<$data2> and loads the results into the text 
-display. Normally these arguments are filenames but they can also be a reference 
-to an array of lines of data, a string containing a slurped file, an open 
-filehandle, a glob (which is interpreted as a filehandle), an IO::File object
-or any other object with a C<getlines> method.
+Compares the data in the text frames and highlights the differences.
 
 Setting either C<-case> or C<-whitespace> to 0 instructs the diff algorithm to 
 ignore case and whitespace, respectively.
@@ -551,6 +640,18 @@ Finer granularity settings are only applied to lines marked as changed by the
 initial comparison. This can lead to slightly different results than you would 
 get if you did a single diff at the higher level of resolution. (The results
 aren't wrong, just different.)
+
+=head2 C<diff> B<Deprecated>
+
+  $w->diff($data1, $data2, -case => 0);
+
+Equivilent to:
+
+  $w->load(a => $data1);
+  $w->load(b => $data1);
+  $w->compare(-case => 0);
+
+This method has been deprecated and may be removed in future versions.
 
 =head1 BUGS
 

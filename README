@@ -18,6 +18,7 @@ DEPENDENCIES
   Perl 5.005
   Tk 800
   Algorithm::Diff
+  Tie::Tk::Text
   IO::File
 
 Algorithm::Diff and IO::File are "soft" requirements. Tk::DiffText is usable 

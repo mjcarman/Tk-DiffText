@@ -1,86 +1,93 @@
 use strict;
 use FindBin;
+use Tk;
 use Test::More tests => 14;
 
 my $file = "$FindBin::Bin/file.txt";
 
 BEGIN { use_ok('Tk::DiffText') };
 
+my $mw = MainWindow->new();
+my $w  = $mw->DiffText();
 
-_load: {
+my $ta = $w->Subwidget('text_a');
+my $tb = $w->Subwidget('text_b');
+
+
+load: {
 	my $got;
-	my $exp = ["foo\n", "bar\n", "baz\n"];
+	my $exp = "foo\nbar\nbaz\n";
+	my @idx = ('1.0', 'end - 1 chars');
 	my $fh;
 
-	$got = Tk::DiffText::_load(["foo\n", "bar\n", "baz\n"]);
-	is_deeply($got, $exp, '_load([list])');
+	$w->load(a => ["foo\n", "bar\n", "baz\n"]);
 
-	$got = Tk::DiffText::_load("foo\nbar\nbaz\n");
-	is_deeply($got, $exp, q"_load('string')");
+	is($ta->get(@idx), $exp, 'load(a => [list])');
+
+	$w->load(a => "foo\nbar\nbaz\n");
+	is($ta->get(@idx), $exp, 'load(a => string)');
 
 	SKIP: {
 		if (open(FH, '>', $file)) {
-			print FH @$exp;
+			print FH $exp;
 			close(FH);
 		}
 		else {
 			skip("Can't create cross-platform test file [$!]", 10);
 		}
 
-		$got = Tk::DiffText::_load($file);
-		is_deeply($got, $exp, q"_load('file')");
+		$w->load(a => $file);
+		is($ta->get(@idx), $exp, 'load(a => file)');
 	
 		open(FH, "< $file");
-		$got = Tk::DiffText::_load(*FH);
-		is_deeply($got, $exp, '_load(*FH)');
+		$w->load(a => *FH);
+		is($ta->get(@idx), $exp, 'load(a => *FH)');
 	
 		seek(FH, 0, 0);
+		$w->load(a => \*FH);
+		is($ta->get(@idx), $exp, 'load(a => \*FH)');
 	
-		$got = Tk::DiffText::_load(\*FH);
-		is_deeply($got, $exp, '_load(\*FH)');
-	
-		seek(FH, 0, 0);
 	
 		open($fh, "< $file");
-		$got = Tk::DiffText::_load($fh);
-		is_deeply($got, $exp, '_load($fh)');
+		$w->load(a => $fh);
+		is($ta->get(@idx), $exp, 'load(a => $fh)');
 	
 		seek($fh, 0, 0);
-	
-		$got = Tk::DiffText::_load(\$fh);
-		is_deeply($got, $exp, '_load(\$fh)');
+		$w->load(a => \$fh);
+		is($ta->get(@idx), $exp, 'load(a => \$fh)');
 		close($fh);
 	
 		eval {require IO::File};
 		skip('IO::File not available', 5) if $@;
 	
-		$got = Tk::DiffText::_load(*FH{IO});
-		is_deeply($got, $exp, '_load(*FH{IO})');
+		seek(FH, 0, 0);
+		$w->load(a => *FH{IO});
+		is($ta->get(@idx), $exp, 'load(a => *FH{IO})');
 	
 		seek(FH, 0, 0);
+		$w->load(a => \*FH{IO});
+		is($ta->get(@idx), $exp, 'load(a => \*FH{IO})');
 	
-		$got = Tk::DiffText::_load(*FH{IO});
-		is_deeply($got, $exp, '_load(\*FH{IO})');
 		close(FH);
 	
 		{
 			local $^W; # no warnings 'deprecated' would require perl 5.6
 
 			open(FH, "< $file");
-			$got = Tk::DiffText::_load(*FH{FILEHANDLE});
-			is_deeply($got, $exp, '_load(*FH{FILEHANDLE})');
+			$w->load(a => *FH{FILEHANDLE});
+			is($ta->get(@idx), $exp, 'load(a => *FH{FILEHANDLE})');
 		
 			seek(FH, 0, 0);
 		
-			$got = Tk::DiffText::_load(*FH{FILEHANDLE});
-			is_deeply($got, $exp, '_load(\*FH{FILEHANDLE})');
+			$w->load(a => \*FH{FILEHANDLE});
+			is($ta->get(@idx), $exp, 'load(a => \*FH{FILEHANDLE})');
 		}
 
 		close(FH);
 
 		$fh = IO::File->new($file, 0);
-		$got = Tk::DiffText::_load($fh);
-		is_deeply($got, $exp, '_load(IO::File)');
+		$w->load(a => $fh);
+		is($ta->get(@idx), $exp, 'load(a => IO::File)');
 		$fh->close;
 	}
 }
@@ -96,10 +103,10 @@ _sdiff: {
 		my $got = Tk::DiffText::_sdiff($a, $b);
 	
 		my $exp = [
-			['-', \$a->[0],  undef  ],
-			['u', \$a->[1], \$b->[0]],
-			['c', \$a->[2], \$b->[1]],
-			['+',  undef,   \$b->[2]],
+			['-',   1,   undef],
+			['u',   2,     1  ],
+			['c',   3,     2  ],
+			['+', undef,   3  ],
 		];
 	
 		is_deeply($got, $exp, '_sdiff()');

@@ -1,12 +1,13 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Tk-DiffText
-version:      0.12
+version:      0.13
 version_from: lib/Tk/DiffText.pm
 installdirs:  site
 requires:
     Algorithm::Diff:               0
     IO::File:                      0
+    Tie::Tk::Text:                 0
     Tk:                            0
 
 distribution_type: module

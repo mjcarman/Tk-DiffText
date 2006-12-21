@@ -7,6 +7,7 @@ WriteMakefile(
 	PREREQ_PM         => {
 		'Tk'              => 0,
 		'Algorithm::Diff' => 0,
+		'Tie::Tk::Text'   => 0,
 		'IO::File'        => 0,
 	},
 	($] >= 5.005 ?

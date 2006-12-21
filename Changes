@@ -1,5 +1,12 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.13 (2006-11-19)
+    * Uses less memory. (Diffs now performed directly on contents of ROText
+      widgets.) This added a dependency on Tie::Tk::Text (new module).
+    * Added load() and compare() methods. diff() now deprecated.
+    * Panes are scroll-locked after being compared, unlocked whenever a pane is
+      loaded.
+
 0.12 (2006-11-15)
     * Intra-line differences now use the key generation function. (i.e. they
       respect settings to ignore case and whitespace.)
