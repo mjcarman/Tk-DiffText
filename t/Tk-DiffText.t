@@ -69,7 +69,7 @@ load: {
 		is($ta->get(@idx), $exp, 'load(a => \*FH{IO})');
 	
 		close(FH);
-	
+
 		{
 			local $^W; # no warnings 'deprecated' would require perl 5.6
 
@@ -89,6 +89,8 @@ load: {
 		$w->load(a => $fh);
 		is($ta->get(@idx), $exp, 'load(a => IO::File)');
 		$fh->close;
+
+		unlink($file);
 	}
 }
 

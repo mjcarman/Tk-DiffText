@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/30/2006 10:56AM
+# Last Modified: 11/30/2006 8:46PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 package Tk::DiffText;
 use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.15';
+$VERSION = '0.16';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -93,6 +93,8 @@ sub Populate {
 	);
 
 	unless ($self->{_map}{type} eq 'none') {
+		$self->{_map}{height} = 0;
+		$self->{_map}{scale}  = 1;
 		$dm->pack(-side => 'left', -fill => 'y');
 	}
 
@@ -112,7 +114,7 @@ sub Populate {
 	for my $i (0 .. 1) {
 		foreach my $w (@{$p[$i]->{scroll_locked}}) {
 			$w->configure(-yscrollcommand =>
-				[\&_scroll_panes, $w, \@p, $i, \$self->{_scroll_lock}]);
+				[\&_scroll_panes, $w, \@p, $i, $self]);
 		}	
 	}
 
@@ -246,15 +248,23 @@ sub _scroll_panes {
 	my $w      = shift; # calling widget
 	my $pane   = shift; # list of panes
 	my $i      = shift; # which pane widget is in
-	my $locked = shift; # state of synchronized scrolling
+	my $self   = shift;
 
 	my ($top, $bottom) = $w->yview();
 
 	foreach my $p (@$pane) {
-		next unless ($$locked || $p eq $pane->[$i]);
+		next unless ($self->{_scroll_lock} || $p eq $pane->[$i]);
 		$p->{yscrollbar}->set(@_);
 		$_->yviewMoveto($top) foreach @{$p->{scroll_locked}};
-	}	
+	}
+	
+	if ($self->{_map}{type} eq 'scrolled') {
+		$self->Subwidget('canvas')->yviewMoveto($top);
+	}
+	elsif ($self->{_map}{type} eq 'scaled') {
+		my $h = $self->{_map}{height} * $self->{_map}{scale};
+		$self->Subwidget('canvas')->coords('view', 0, $top * $h, 19, $bottom * $h);
+	}
 }
 
 
@@ -352,7 +362,7 @@ sub _compare_text {
 	# force both panes to scroll to top so that dlineinfo() works
 	$_->see('1.0') foreach ($ga, $ta, $gb, $tb);
 	my $lh = ($ta->dlineinfo('1.0'))[3];
-	my $cy = $self->cget(-borderwidth); # canvas y position
+	my $cy = $self->cget(-borderwidth) + $self->cget(-pady); # canvas y position
 
 	my @diff = _sdiff(
 		$self->{_textarray}{a},
@@ -380,14 +390,14 @@ sub _compare_text {
 			$ta->tagAdd('del', "$l.0", "$l.end + 1 chars");
 			$gb->insert("$l.0", "\n", 'pad');
 			$tb->insert("$l.0", "\n", 'pad');
-			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'del');
+			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'del');
 		}
 		elsif ($d->[0] eq '+') {
 			my $l = $d->[2] + $pads[2]; $pads[1]++;
 			$tb->tagAdd('add', "$l.0", "$l.end + 1 chars");
 			$ga->insert("$l.0", "\n", 'pad');
 			$ta->insert("$l.0", "\n", 'pad');
-			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'add');
+			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'add');
 		}
 		elsif ($d->[0] eq 'c') {
 			if ($re) {
@@ -426,7 +436,7 @@ sub _compare_text {
 				$ta->tagAdd('mod', "$l1.0", "$l1.0 lineend + 1 chars");
 				$tb->tagAdd('mod', "$l2.0", "$l2.0 lineend + 1 chars");
 			}
-			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'mod');
+			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'mod');
 		}
 
 	} continue {
@@ -439,7 +449,16 @@ sub _compare_text {
 	$map->itemconfigure('add', @{$self->{_map}{colors}{add}});
 	$map->itemconfigure('mod', @{$self->{_map}{colors}{mod}});
 
-	$self->_rescale_map;
+	if ($self->{_map}{type} eq 'scaled') {
+		# marker for current view
+		my ($t, $b) = $self->Subwidget('text_a')->yview();
+		$map->createRectangle(0, $t*$cy, 19, $b*$cy, -tags => 'view');
+		$self->_rescale_map;
+	}
+	elsif ($self->{_map}{type} eq 'scrolled') {
+		# scrollable region
+		$map->configure(-scrollregion => [0, 0, 20, $cy+$lh]);
+	}
 
 	$ga->configure(-state => 'disabled');
 	$gb->configure(-state => 'disabled');
@@ -683,7 +702,7 @@ value hash is as follows:
 For each of the tags you can specify any option that is valid for use in a 
 ROText widget tag: -foreground, -background, -overstrike, etc.
 
-C<-map =E<gt> 'scaled'|'none'>
+C<-map =E<gt> 'scaled'|'scrolled'|'none'>
 
 Controls the display and type of difference map. Defaults to B<scaled>.
 

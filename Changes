@@ -1,5 +1,9 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.16 (2006-11-30)
+    * Added scrolled difference map support.
+    * Added current view marker to scaled map.
+
 0.15 (2006-11-29)
     * Added scaled difference map.
     * Fixed a bug where stray data in $_ could show up in the first file loaded.
