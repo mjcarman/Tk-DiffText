@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/14/2006 7:31PM
+# Last Modified: 11/15/2006 2:43PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 
 package Tk::DiffText;
 use vars qw'$VERSION';
-$VERSION = '0.11';
+$VERSION = '0.12';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -326,7 +326,7 @@ sub _show_diff_text {
 			my @nl = (chomp ${$d->[1]}, chomp ${$d->[2]});
 			my $dx = [split($re, ${$d->[1]})];
 			my $dy = [split($re, ${$d->[2]})];
-			my @dd = _sdiff($dx, $dy);
+			my @dd = _sdiff($dx, $dy, $kg);
 
 			foreach my $d (@dd) {
 				$tw->[0]->insert('end', ${$d->[1]}, $tag[0]{$d->[0]});

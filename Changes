@@ -1,5 +1,9 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.12 (2006-11-15)
+    * Intra-line differences now use the key generation function. (i.e. they
+      respect settings to ignore case and whitespace.)
+
 0.11 (2006-11-14)
     * Fix test suite to work better cross platform
     * Initialized gutter width to minimal size on creation
