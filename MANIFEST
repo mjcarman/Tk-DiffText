@@ -1,0 +1,8 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/file.txt
+t/Tk-DiffText.t
+lib/Tk/DiffText.pm
+META.yml                                 Module meta-data (added by MakeMaker)
