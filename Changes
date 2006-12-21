@@ -1,5 +1,9 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.15 (2006-11-29)
+    * Added scaled difference map.
+    * Fixed a bug where stray data in $_ could show up in the first file loaded.
+
 0.14 (2006-11-21)
     * Carp::carp now properly imported into package namespace so warnings
       actually work.

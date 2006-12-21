@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/21/2006 3:09PM
+# Last Modified: 11/30/2006 10:56AM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 package Tk::DiffText;
 use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.14';
+$VERSION = '0.15';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -51,12 +51,14 @@ sub Populate {
 	$gutter = 1          unless defined $gutter;
 	$orient = 'vertical' unless defined $orient;
 
+	$self->bind('<Configure>', [\&_rescale_map, $self]);
+
 	# I'm not sure whether it's a bug of a feature, but Frames with contents
 	# always collapse down to just what's needed by the widgets they contain.
 	# This makes setting the width and height of the composite widget worthless.
 	# Empty Frames, on the other hand, *do* respect height and width settings.
-	# We exploit this by creating invisible frames along the top and left 
-	# edges of the composite widget and using them to control its size.
+	# We exploit this by creating invisible frames along the top and left edges
+	# of the composite widget and using them to control its (minimum) size.
 	my $f  = $self;
 	my $wf = $f->Frame(-height => 0, -borderwidth => 0)->pack(-side => 'top');
 	my $hf = $f->Frame(-width  => 0, -borderwidth => 0)->pack(-side => 'left');
@@ -75,9 +77,24 @@ sub Populate {
 		delete $arg->{-diffcolors};
 	}
 
+	$self->{_map}{type}   = delete $arg->{-map} || 'scaled';
+	$self->{_map}{colors} = _get_map_colors($diffcolors);
+
 	$self->SUPER::Populate($arg);
 
 	my $side = $orient eq 'horizontal' ? 'top' : 'left';
+
+	my $dm = $f->Canvas(
+		-width      => 20,        #
+		-height     => 1,         # fills to match Text areas
+		-background => 'white',   #
+		-takefocus          => 0, #
+		-highlightthickness => 0, #
+	);
+
+	unless ($self->{_map}{type} eq 'none') {
+		$dm->pack(-side => 'left', -fill => 'y');
+	}
 
 	my @p = (
 		_make_pane($f, $side, $diffcolors, $gutter),
@@ -126,14 +143,15 @@ sub Populate {
 
 	$self->Advertise(text_a       => $p[0]->{text}      );
 	$self->Advertise(gutter_a     => $p[0]->{gutter}    );
-	$self->Advertise(hscrollbar_a => $p[0]->{hscrollbar});
-	$self->Advertise(vscrollbar_a => $p[0]->{vscrollbar});
+	$self->Advertise(xscrollbar_a => $p[0]->{xscrollbar});
+	$self->Advertise(yscrollbar_a => $p[0]->{yscrollbar});
 
 	$self->Advertise(text_b       => $p[1]->{text}      );
 	$self->Advertise(gutter_b     => $p[1]->{gutter}    );
-	$self->Advertise(hscrollbar_b => $p[1]->{hscrollbar});
-	$self->Advertise(vscrollbar_b => $p[1]->{vscrollbar});
+	$self->Advertise(xscrollbar_b => $p[1]->{xscrollbar});
+	$self->Advertise(yscrollbar_b => $p[1]->{yscrollbar});
 
+	$self->Advertise(canvas => $dm);
 }
 
 
@@ -200,8 +218,8 @@ sub _make_pane {
 	
 	return {
 		frame         => $f,
-		vscrollbar    => $vsb,
-		hscrollbar    => $hsb,
+		yscrollbar    => $vsb,
+		xscrollbar    => $hsb,
 		gutter        => $gw,
 		text          => $tw,
 		textarray     => \@text,
@@ -234,7 +252,7 @@ sub _scroll_panes {
 
 	foreach my $p (@$pane) {
 		next unless ($$locked || $p eq $pane->[$i]);
-		$p->{vscrollbar}->set(@_);
+		$p->{yscrollbar}->set(@_);
 		$_->yviewMoveto($top) foreach @{$p->{scroll_locked}};
 	}	
 }
@@ -320,13 +338,21 @@ sub _compare_text {
 	$self->_reset_tags('a');
 	$self->_reset_tags('b');
 
-	my $ga = $self->Subwidget('gutter_a');
-	my $gb = $self->Subwidget('gutter_b');
-	my $ta = $self->Subwidget('text_a'  );
-	my $tb = $self->Subwidget('text_b'  );
+	my $ga  = $self->Subwidget('gutter_a');
+	my $gb  = $self->Subwidget('gutter_b');
+	my $ta  = $self->Subwidget('text_a'  );
+	my $tb  = $self->Subwidget('text_b'  );
+	my $map = $self->Subwidget('canvas'  );
 
 	$ga->configure(-state => 'normal');
 	$gb->configure(-state => 'normal');
+
+	$map->delete('all');
+
+	# force both panes to scroll to top so that dlineinfo() works
+	$_->see('1.0') foreach ($ga, $ta, $gb, $tb);
+	my $lh = ($ta->dlineinfo('1.0'))[3];
+	my $cy = $self->cget(-borderwidth); # canvas y position
 
 	my @diff = _sdiff(
 		$self->{_textarray}{a},
@@ -354,12 +380,14 @@ sub _compare_text {
 			$ta->tagAdd('del', "$l.0", "$l.end + 1 chars");
 			$gb->insert("$l.0", "\n", 'pad');
 			$tb->insert("$l.0", "\n", 'pad');
+			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'del');
 		}
 		elsif ($d->[0] eq '+') {
 			my $l = $d->[2] + $pads[2]; $pads[1]++;
 			$tb->tagAdd('add', "$l.0", "$l.end + 1 chars");
 			$ga->insert("$l.0", "\n", 'pad');
 			$ta->insert("$l.0", "\n", 'pad');
+			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'add');
 		}
 		elsif ($d->[0] eq 'c') {
 			if ($re) {
@@ -398,9 +426,20 @@ sub _compare_text {
 				$ta->tagAdd('mod', "$l1.0", "$l1.0 lineend + 1 chars");
 				$tb->tagAdd('mod', "$l2.0", "$l2.0 lineend + 1 chars");
 			}
+			$map->createRectangle(0, $cy, 50, $cy+$lh, -tags => 'mod');
 		}
 
-	}
+	} continue {
+		$cy += $lh;
+	}	
+	$self->{_map}{height} = $cy;
+	$self->{_map}{scale}  = 1;
+
+	$map->itemconfigure('del', @{$self->{_map}{colors}{del}});
+	$map->itemconfigure('add', @{$self->{_map}{colors}{add}});
+	$map->itemconfigure('mod', @{$self->{_map}{colors}{mod}});
+
+	$self->_rescale_map;
 
 	$ga->configure(-state => 'disabled');
 	$gb->configure(-state => 'disabled');
@@ -478,6 +517,7 @@ sub load {
 
 	$self->{_scroll_lock} = 0;
 
+	$self->Subwidget('canvas')->delete('all');
 	$self->_reset_tags('a');
 	$self->_reset_tags('b');
 
@@ -516,6 +556,7 @@ sub load {
 		# copy to scalar so that <> interprets it as a filehandle
 		# and not a glob pattern. cf. perlop - I/O Operators
 		my $fh = $_[2];
+		local $_;
 		do { $tw->insert('end', $_) } while (<$fh>);
 	}
 	elsif ($_[2] =~ /\n/) {
@@ -528,6 +569,7 @@ sub load {
 		# what version added open($fh...) in place of open(FH...)
 		local *FH;
 		if (open(FH, "< $_[2]")) {
+			local $_;
 			do { $tw->insert('end', $_) } while (<FH>);
 			close(FH);
 		}
@@ -548,6 +590,42 @@ sub load {
 }
 
 
+#-------------------------------------------------------------------------------
+# Method  : _rescale_map
+# Purpose : Rescale the difference map canvas when the window is resized.
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub _rescale_map {
+	my $self   = shift;
+	return unless $self->{_map}{type} eq 'scaled';
+
+	my $canvas = $self->Subwidget('canvas');
+	my $wh     = $self->height;
+	my $mh     = $self->{_map}{height} or return;
+	my $cs     = $self->{_map}{scale};
+	my $sf     = $wh > $mh ? 1 : $wh / $mh;
+
+	$canvas->scale('all', 0, 0, 1, $sf/$cs);
+	$self->{_map}{scale} = $sf;
+}
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _get_map_colors
+# Purpose    : Match colors use in map to text areas.
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _get_map_colors {
+	my $diffcolors = shift;
+	my %mapcolors;
+
+	foreach my $t ('mod', 'add', 'del') {
+		my %x = @{$diffcolors->{$t}};
+		my $c = $x{-background} || $x{-bg} || $x{-foreground} || $x{-fg};
+		$mapcolors{$t} = [-outline => $c, -fill => $c];
+	}
+	return \%mapcolors;
+}
 
 1;
 
@@ -604,6 +682,14 @@ value hash is as follows:
 
 For each of the tags you can specify any option that is valid for use in a 
 ROText widget tag: -foreground, -background, -overstrike, etc.
+
+C<-map =E<gt> 'scaled'|'none'>
+
+Controls the display and type of difference map. Defaults to B<scaled>.
+
+The difference map will match its colors to those from C<-diffcolors> by 
+default. It uses the background color if specified, otherwise it uses 
+the foreground color.
 
 =head1 METHODS
 
@@ -662,8 +748,8 @@ This method has been deprecated and may be removed in future versions.
 
 The API isn't settled yet. Comments welcome.
 
-Some configuration settings (-gutter, -orient, -diffcolors) are only valid at 
-creation time and cannot be changed later.
+Some configuration settings (-gutter, -orient, -diffcolors, -map) are 
+only valid at creation time and cannot be changed later.
 
 The line numbers in the gutter can get out of sync with the file display if you 
 set -wrap to something other than 'none' (so don't do that).
