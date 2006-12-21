@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 12/2/2006 4:27PM
+# Last Modified: 12/5/2006 3:52PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 package Tk::DiffText;
 use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.17';
+$VERSION = '0.18';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -64,10 +64,10 @@ sub Populate {
 	my $hf = $f->Frame(-width  => 0, -borderwidth => 0)->pack(-side => 'left');
 
 	my $diffcolors = {
-		add    => [-background => '#ccffcc'],
-		del    => [-background => '#ffcccc'],
-		mod    => [-background => '#aed7ff'],
-		pad    => [-background => '#f0f0f0'],
+		add => [-background => '#ccffcc'],
+		del => [-background => '#ffcccc'],
+		mod => [-background => '#aed7ff'],
+		pad => [-background => '#f0f0f0'],
 	};
 
 	if ($arg->{-diffcolors}) {
