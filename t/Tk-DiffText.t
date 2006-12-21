@@ -12,37 +12,45 @@ _load: {
 	my $exp = ["foo\n", "bar\n", "baz\n"];
 	my $fh;
 
-	$got = Tk::DiffText::_load($file);
-	is_deeply($got, $exp, q"_load('file')");
-
 	$got = Tk::DiffText::_load(["foo\n", "bar\n", "baz\n"]);
 	is_deeply($got, $exp, '_load([list])');
 
 	$got = Tk::DiffText::_load("foo\nbar\nbaz\n");
 	is_deeply($got, $exp, q"_load('string')");
 
-	open(FH, "< $file");
-	$got = Tk::DiffText::_load(*FH);
-	is_deeply($got, $exp, '_load(*FH)');
-
-	seek(FH, 0, 0);
-
-	$got = Tk::DiffText::_load(\*FH);
-	is_deeply($got, $exp, '_load(\*FH)');
-
-	seek(FH, 0, 0);
-
-	open($fh, "< $file");
-	$got = Tk::DiffText::_load($fh);
-	is_deeply($got, $exp, '_load($fh)');
-
-	seek($fh, 0, 0);
-
-	$got = Tk::DiffText::_load(\$fh);
-	is_deeply($got, $exp, '_load(\$fh)');
-	close($fh);
-
 	SKIP: {
+		if (open(FH, '>', $file)) {
+			print FH @$exp;
+			close(FH);
+		}
+		else {
+			skip("Can't create cross-platform test file [$!]", 10);
+		}
+
+		$got = Tk::DiffText::_load($file);
+		is_deeply($got, $exp, q"_load('file')");
+	
+		open(FH, "< $file");
+		$got = Tk::DiffText::_load(*FH);
+		is_deeply($got, $exp, '_load(*FH)');
+	
+		seek(FH, 0, 0);
+	
+		$got = Tk::DiffText::_load(\*FH);
+		is_deeply($got, $exp, '_load(\*FH)');
+	
+		seek(FH, 0, 0);
+	
+		open($fh, "< $file");
+		$got = Tk::DiffText::_load($fh);
+		is_deeply($got, $exp, '_load($fh)');
+	
+		seek($fh, 0, 0);
+	
+		$got = Tk::DiffText::_load(\$fh);
+		is_deeply($got, $exp, '_load(\$fh)');
+		close($fh);
+	
 		eval {require IO::File};
 		skip('IO::File not available', 5) if $@;
 	

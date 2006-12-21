@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/12/2006 1:50PM
+# Last Modified: 11/14/2006 7:31PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 
 package Tk::DiffText;
 use vars qw'$VERSION';
-$VERSION = '0.10';
+$VERSION = '0.11';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -64,18 +64,18 @@ sub Populate {
 	my $wf = $f->Frame(-height => 0, -borderwidth => 0)->pack(-side => 'top');
 	my $hf = $f->Frame(-width  => 0, -borderwidth => 0)->pack(-side => 'left');
 
-	my $colors = {
+	my $diffcolors = {
 		add    => [-background => '#ccffcc'],
 		del    => [-background => '#ffcccc'],
 		mod    => [-background => '#aed7ff'],
 		pad    => [-background => '#f0f0f0'],
 	};
 
-	if ($arg->{-colors}) {
-		while (my ($k, $v) = each %{$arg->{-colors}}) {
-			$colors->{$k} = $v;
+	if ($arg->{-diffcolors}) {
+		while (my ($k, $v) = each %{$arg->{-diffcolors}}) {
+			$diffcolors->{$k} = $v;
 		}
-		delete $arg->{-colors};
+		delete $arg->{-diffcolors};
 	}
 
 	$self->SUPER::Populate($arg);
@@ -97,6 +97,7 @@ sub Populate {
 
 		push @gw, $fw[-1]->ROText(
 			-height      => 1, # height fills to match text areas
+			-width       => 1, # just for starters
 			-borderwidth => 0,
 			-state       => 'disabled',
 			-wrap        => 'none',
@@ -111,10 +112,10 @@ sub Populate {
 
 		for my $w ($tw[-1]) {
 			$w->tagConfigure('norm', @{[]});
-			$w->tagConfigure('add',  @{$colors->{add}});
-			$w->tagConfigure('del',  @{$colors->{del}});
-			$w->tagConfigure('mod',  @{$colors->{mod}});
-			$w->tagConfigure('pad',  @{$colors->{pad}});
+			$w->tagConfigure('add',  @{$diffcolors->{add}});
+			$w->tagConfigure('del',  @{$diffcolors->{del}});
+			$w->tagConfigure('mod',  @{$diffcolors->{mod}});
+			$w->tagConfigure('pad',  @{$diffcolors->{pad}});
 			$w->tagRaise('sel');
 		}
 
@@ -503,7 +504,7 @@ C<-gutterbackground =E<gt> color>
 
 Sets the gutter background color.
 
-C<-colors =E<gt> {...}>
+C<-diffcolors =E<gt> {...}>
 
 Sets the colors used for highlighting diff results. The structure of the
 value hash is as follows:
@@ -555,8 +556,11 @@ aren't wrong, just different.)
 
 The API isn't settled yet. Comments welcome.
 
-Some configuration settings (-gutter, -orient, -colors) are only valid at 
+Some configuration settings (-gutter, -orient, -diffcolors) are only valid at 
 creation time and cannot be changed later.
+
+The line numbers in the gutter can get out of sync with the file display if you 
+set -wrap to something other than 'none' (so don't do that).
 
 =head1 AUTHOR
 
