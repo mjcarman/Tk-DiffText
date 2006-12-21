@@ -1,5 +1,13 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.14 (2006-11-21)
+    * Carp::carp now properly imported into package namespace so warnings
+      actually work.
+    * load() now clears line number gutter when a file load fails.
+    * load() now defaults to input being interpreted as a file name, so 
+      attempting to load a non-existant file will cause a "Can't read file..."
+      warning instead of a "Don't know how to load from..." one.
+
 0.13 (2006-11-19)
     * Uses less memory. (Diffs now performed directly on contents of ROText
       widgets.) This added a dependency on Tie::Tk::Text (new module).

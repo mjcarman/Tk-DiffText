@@ -1,16 +1,16 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 11/19/2006 3:13PM
+# Last Modified: 11/21/2006 3:09PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
-use Carp qw'carp';
 use Tk;
 use Tk::widgets qw'ROText Scrollbar';
 
 package Tk::DiffText;
+use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.13';
+$VERSION = '0.14';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -469,7 +469,8 @@ sub load {
 	my $self  = $_[0];
 	my $where = lc $_[1];
 	my ($tw, $gw, $ta);
-	
+	my $ok = 1;
+
 	unless ($where =~ /^[ab]$/) {
 		carp("Invalid load destination '$_[1]'");
 		return;
@@ -484,6 +485,8 @@ sub load {
 	$gw = $self->Subwidget("gutter_$where");
 	$ta = $self->{_textarray}{$where};
 
+	$gw->configure(-state => 'normal');
+	$gw->delete('1.0', 'end');
 	$tw->delete('1.0', 'end');
 
 	$self->update();
@@ -505,7 +508,7 @@ sub load {
 		}
 		else {
 			carp(sprintf("Don't know how to load from '%s' reference", ref $_[2]));
-			return;
+			$ok = 0;
 		}
 	}
 	elsif ($_[2] =~ /^\*(\w*::)+\$?\w+$/) {
@@ -519,29 +522,29 @@ sub load {
 		# assume contents of slurped file
 		$tw->insert('end', $_[2]);
 	}		
-	elsif (-T $_[2]) {
+	else {
+		# assume file name
 		# Need two-arg open() for perls < v5.6
 		# what version added open($fh...) in place of open(FH...)
 		local *FH;
-		open(FH, "< $_[2]") or do { carp("Can't read file '$_[2]' [$!]"); return };
-		do { $tw->insert('end', $_) } while (<FH>);
-		close(FH);
-	}
-	else {
-		carp(sprintf("Don't know how to load data from '%s'", $_[2]));
-		return;
+		if (open(FH, "< $_[2]")) {
+			do { $tw->insert('end', $_) } while (<FH>);
+			close(FH);
+		}
+		else {
+			carp("Can't read file '$_[2]' [$!]");
+			$ok = 0;
+		}
 	}
 
-	my $n = @$ta;
-	my $w = length($n);
-	$gw->configure(-state => 'normal');
-	$gw->delete('0.0', 'end');
+	my $n = $ok ? @$ta       :  0;
+	my $w = $ok ? length($n) : -1;
 	$gw->insert('end', sprintf("%${w}i\n", $_)) foreach (1 .. $n);
 	$gw->configure(-width => $w + 1);
 	$gw->configure(-state => 'disabled');
 
 	$self->update();
-	return 1;
+	return $ok;
 }
 
 
@@ -615,6 +618,8 @@ Normally I<data> is a filename but it can also be a reference to an array of
 lines of data, a string containing a slurped file, an open filehandle, a glob 
 (which is interpreted as a filehandle), an IO::File object or any other object 
 with a C<getline> method.
+
+Returns true on success, false otherwise.
 
 =head2 C<compare>
 
