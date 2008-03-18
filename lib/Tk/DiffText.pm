@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 12/5/2006 3:52PM
+# Last Modified: 3/18/2008 9:32:46 AM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -68,6 +68,7 @@ sub Populate {
 		del => [-background => '#ffcccc'],
 		mod => [-background => '#aed7ff'],
 		pad => [-background => '#f0f0f0'],
+		cur => [-background => '#ffff80'],
 	};
 
 	if ($arg->{-diffcolors}) {
@@ -108,6 +109,9 @@ sub Populate {
 		b => $p[1]->{textarray},
 	};
 	$self->{_scroll_lock} = 0;
+
+	$self->{_diffloc} = [];
+	$self->{_current}    = undef;
 
 	# Set up synchronized scrolling between panes. It can be turned on/off by
 	# toggling the _scroll_lock flag.
@@ -163,10 +167,10 @@ sub Populate {
 # Notes      : 
 #-------------------------------------------------------------------------------
 sub _make_pane {
-	my $pw     = shift; # parent widget
-	my $side   = shift; # where to pack pane
+	my $pw         = shift; # parent widget
+	my $side       = shift; # where to pack pane
 	my $diffcolors = shift;
-	my $gutter = shift; # gutter displayed?
+	my $gutter     = shift; # gutter displayed?
 
 	my $f = $pw->Frame()->pack(
 		-side   => $side,
@@ -202,6 +206,7 @@ sub _make_pane {
 	$tw->tagConfigure('add',  @{$diffcolors->{add}});
 	$tw->tagConfigure('del',  @{$diffcolors->{del}});
 	$tw->tagConfigure('mod',  @{$diffcolors->{mod}});
+	$tw->tagConfigure('cur',  @{$diffcolors->{cur}});
 	$tw->tagRaise('sel');
 
 	$hsb->configure(-command => sub { $tw->xview(@_) });
@@ -325,6 +330,7 @@ sub _reset_tags {
 	$tw->tagRemove('add', '1.0', 'end');
 	$tw->tagRemove('del', '1.0', 'end');
 	$tw->tagRemove('mod', '1.0', 'end');
+	$tw->tagRemove('cur', '1.0', 'end');
 	$tw->DeleteTextTaggedWith('pad');
 
 	my $gw = $self->Subwidget("gutter_$p");
@@ -381,6 +387,8 @@ sub _compare_text {
 	}
 
 	my @pads = (undef, 0, 0);
+	my @loc; # track locations of differences for navigation
+	my $prev;
 
 	foreach my $d (@diff) {
 		next if ($d->[0] eq 'u'); # line matches. stop.
@@ -391,6 +399,15 @@ sub _compare_text {
 			$gb->insert("$l.0", "\n", 'pad');
 			$tb->insert("$l.0", "\n", 'pad');
 			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'del');
+
+			if ($prev eq $d->[0]) {
+				# extend endpoint
+				$loc[-1][1] = "$l.end + 1 chars";
+			}
+			else {
+				# create new location
+				push @loc, ["$l.0", "$l.end + 1 chars"];
+			}
 		}
 		elsif ($d->[0] eq '+') {
 			my $l = $d->[2] + $pads[2]; $pads[1]++;
@@ -398,6 +415,15 @@ sub _compare_text {
 			$ga->insert("$l.0", "\n", 'pad');
 			$ta->insert("$l.0", "\n", 'pad');
 			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'add');
+
+			if ($prev eq $d->[0]) {
+				# extend endpoint
+				$loc[-1][1] = "$l.end + 1 chars";
+			}
+			else {
+				# create new location
+				push @loc, ["$l.0", "$l.end + 1 chars"];
+			}
 		}
 		elsif ($d->[0] eq 'c') {
 			if ($re) {
@@ -408,6 +434,15 @@ sub _compare_text {
 				my $dy = [split($re, $tb->get("$l2.0", "$l2.end"))];
 				my @dd = Algorithm::Diff::sdiff($dx, $dy, $kg);
 			
+				if ($prev eq $d->[0]) {
+					# extend endpoint
+					$loc[-1][1] = "$l1.end + 1 chars";
+				}
+				else {
+					# create new location
+					push @loc, ["$l1.0", "$l1.end + 1 chars"];
+				}
+
 				my ($c1, $c2) = (0, 0);
 				foreach my $d (@dd) {
 					my $n1 = length $d->[1];
@@ -435,15 +470,28 @@ sub _compare_text {
 				my $l2 = $d->[2] + $pads[2];
 				$ta->tagAdd('mod', "$l1.0", "$l1.0 lineend + 1 chars");
 				$tb->tagAdd('mod', "$l2.0", "$l2.0 lineend + 1 chars");
+
+				if ($prev eq $d->[0]) {
+					# extend endpoint
+					$loc[-1][1] = "$l1.end + 1 chars";
+				}
+				else {
+					# create new location
+					push @loc, ["$l1.0", "$l1.end + 1 chars"];
+				}
 			}
 			$map->createRectangle(0, $cy, 20, $cy+$lh-1, -tags => 'mod');
 		}
 
 	} continue {
-		$cy += $lh;
+		$prev  = $d->[0];
+		$cy   += $lh;
 	}	
 	$self->{_map}{height} = $cy;
 	$self->{_map}{scale}  = 1;
+
+	$self->{_diffloc} = \@loc;
+	$self->{_current} = -1;
 
 	$map->itemconfigure('del', @{$self->{_map}{colors}{del}});
 	$map->itemconfigure('add', @{$self->{_map}{colors}{add}});
@@ -616,6 +664,77 @@ sub load {
 
 
 #-------------------------------------------------------------------------------
+# Method  : _set_current
+# Purpose : 
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub _set_current {
+	my $self = shift;
+	my $n    = shift; # index of diff to make current
+	my $c    = $self->{_current};
+	my $loc  = $self->{_diffloc};
+
+	# clear current markers
+	$self->Subwidget('text_a')->tagRemove('cur', @{$loc->[$c]});
+	$self->Subwidget('text_b')->tagRemove('cur', @{$loc->[$c]});
+
+	# set new markers
+	$self->Subwidget('text_a')->tagAdd('cur', @{$loc->[$n]});
+	$self->Subwidget('text_b')->tagAdd('cur', @{$loc->[$n]});
+
+	# make difference visible
+	$self->Subwidget('text_a')->see($loc->[$n][0]);
+
+	# update index of current difference
+	$self->{_current} = $n;
+}
+
+
+#-------------------------------------------------------------------------------
+# Method  : first
+# Purpose : Navigate to the first difference
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub first {
+	my $self = shift;
+	$self->_set_current(0) if @{$self->{_diffloc}};
+}
+
+
+#-------------------------------------------------------------------------------
+# Method  : prev
+# Purpose : Navigate to the previous difference
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub prev {
+	my $self = shift;
+	$self->_set_current($self->{_current} - 1) if $self->{_current} > 0;
+}
+
+
+#-------------------------------------------------------------------------------
+# Method  : next
+# Purpose : Navigate to the next difference
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub next {
+	my $self = shift;
+	$self->_set_current($self->{_current} + 1) if $self->{_current} < $#{$self->{_diffloc}};
+}
+
+
+#-------------------------------------------------------------------------------
+# Method  : last
+# Purpose : Navigate to the lat difference
+# Notes   : 
+#-------------------------------------------------------------------------------
+sub last {
+	my $self = shift;
+	$self->_set_current($#{$self->{_diffloc}}) if $#{$self->{_diffloc}} >= 0;
+}
+
+
+#-------------------------------------------------------------------------------
 # Method  : _rescale_map
 # Purpose : Rescale the difference map canvas when the window is resized.
 # Notes   : 
@@ -686,8 +805,7 @@ sub _mapjump {
 	$top = 0 if $top < 0;
 	$top = 1 if $top > 1;
 
-	# cause the real motion by moving (just one!) of the
-	# scroll-locked widgets
+	# cause the real motion by moving (just one!) of the scroll-locked widgets
 	$w->yviewMoveto($top);
 }
 
@@ -743,6 +861,7 @@ value hash is as follows:
     del => [-fg => 'red', -overstrike => 1], # tag for deletions
     mod => [-fg => 'blue'   ],               # tag for changes
     pad => [-bg => '#f0f0f0'],               # tag for blank line padding
+    cur => [-bg => 'yellow'],                # tag for navigation
   }
 
 For each of the tags you can specify any option that is valid for use in a 
@@ -815,9 +934,37 @@ Equivilent to:
 
 This method has been deprecated and may be removed in future versions.
 
-=head1 BUGS
+=head2 C<first>
 
-The API isn't settled yet. Comments welcome.
+Highlights the first difference and scrolls to bring it in view.
+
+=head2 C<prev>
+
+Highlights the previous difference and scrolls to bring it in view.
+
+=head2 C<next>
+
+Highlights the next difference and scrolls to bring it in view.
+
+=head2 C<last>
+
+Highlights the last difference and scrolls to bring it in view.
+
+=head1 NOTES
+
+=head2 Unicode
+
+Tk::DiffText supports Unicode provided that your versions of Perl (5.8+) and Tk 
+(804+) do. To compare Unicode files, open the files with the appropriate IO 
+layer and pass C<load> the filehandles.
+
+  open(my $fha, '<:utf8', $file_a) or die;
+  open(my $fhb, '<:utf8', $file_b) or die;
+  
+  $w->load(a => $fha);
+  $w->load(b => $fhb);
+
+=head1 BUGS
 
 Some configuration settings (-gutter, -orient, -diffcolors, -map) are 
 only valid at creation time and cannot be changed later.
@@ -831,9 +978,10 @@ Michael J. Carman <mjcarman@mchsi.com>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2006 by Michael J. Carman
+Copyright (C) 2006,2008 by Michael J. Carman
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
 
 =cut
+ 
