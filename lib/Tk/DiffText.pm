@@ -1,6 +1,6 @@
 #===============================================================================
 # Tk/DiffText.pm
-# Last Modified: 3/18/2008 9:32:46 AM
+# Last Modified: 3/21/2008 1:07:01 PM
 #===============================================================================
 BEGIN {require 5.005} # for qr//
 use strict;
@@ -10,7 +10,7 @@ use Tk::widgets qw'ROText Scrollbar';
 package Tk::DiffText;
 use Carp qw'carp';
 use vars qw'$VERSION';
-$VERSION = '0.18';
+$VERSION = '0.19';
 
 use base qw'Tk::Frame';
 Tk::Widget->Construct('DiffText');
@@ -926,7 +926,7 @@ aren't wrong, just different.)
 
   $w->diff($data1, $data2, -case => 0);
 
-Equivilent to:
+Equivalent to:
 
   $w->load(a => $data1);
   $w->load(b => $data1);

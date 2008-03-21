@@ -1,5 +1,10 @@
 Revision history for Perl extension Tk::DiffText.
 
+0.19 (2008-03-21)
+    * Rerelease to fix fragile archive file. (IZArc 3.81 uses backslashes as 
+      path separators instead of forward slashes. This breaks some *nix unzip 
+      programs.)
+
 0.18 (2008-03-18)
     * Added support for nagivating differences.
     * Updated documentation to describe how to use with Unicode files.
